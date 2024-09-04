@@ -1,6 +1,8 @@
 import gleam/bool
 import gleam/float
+import gleam/function
 import gleam/int
+import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/order.{Eq, Gt, Lt}
@@ -12,70 +14,81 @@ const full_price = 800.0
 pub fn lowest_price(books: List(Int)) -> Float {
   let highest_price = full_price *. int.to_float(list.length(books))
 
-  books
-  |> apply_discounts(Discount(discounted_price: 0.0, children: []))
-  |> sumup_discounted_price(0.0)
-  |> list.fold(from: highest_price, with: fn(lowest, curr) {
-    float.min(lowest, highest_price -. curr)
+  Node(books:, discount_price: 0.0, d5: None, d4: None, d3: None, d2: None)
+  |> apply_discounts
+  |> function.tap(io.debug)
+  |> get_node_discount_branches()
+  |> list.fold(from: highest_price, with: fn(lowest, total_discounted) {
+    float.min(lowest, highest_price -. total_discounted)
   })
 }
 
-type Discount {
-  Discount(discounted_price: Float, children: List(Discount))
+fn get_node_discount_branches(node: Node) {
+  case
+    [node.d5, node.d4, node.d3, node.d2]
+    |> option.values
+  {
+    [] -> [0.0]
+    otherwise ->
+      otherwise
+      |> list.flat_map(fn(node) {
+        get_node_discount_branches(node)
+        |> list.map(fn(discount) { discount +. node.discount_price })
+      })
+  }
 }
 
-fn sumup_discounted_price(discount: Discount, acc: Float) -> List(Float) {
-  discount.children
-  |> list.flat_map(with: fn(d) {
-    sumup_discounted_price(d, acc +. discount.discounted_price)
-  })
+type Node {
+  Node(
+    books: List(Int),
+    discount_price: Float,
+    d5: Option(Node),
+    d4: Option(Node),
+    d3: Option(Node),
+    d2: Option(Node),
+  )
 }
 
-fn apply_discounts(books: List(Int), discount: Discount) -> Discount {
-  let unique_books = books |> set.from_list |> set.size
+fn apply_discounts(node: Node) -> Node {
+  let unique_books = node.books |> set.from_list |> set.size
 
-  let discounts =
-    [5, 4, 3, 2]
-    |> list.map(fn(discount) {
-      case int.compare(discount, unique_books) {
-        Lt | Eq ->
-          apply_discounts(
-            remove_books(discount, books, set.new(), []),
-            Discount(
-              discounted_price: get_discounted_price(discount),
-              children: [],
-            ),
-          )
-        Gt -> Discount(discounted_price: 0.0, children: [])
-      }
-    })
-
-  Discount(..discount, children: discounts)
+  Node(
+    ..node,
+    d5: try_apply_discount(5, unique_books, node.books),
+    d4: try_apply_discount(4, unique_books, node.books),
+    d3: try_apply_discount(3, unique_books, node.books),
+    d2: try_apply_discount(2, unique_books, node.books),
+  )
 }
 
-// fn apply_discounts(books: List(Int)) -> List(List(Float)) {
-//   let unique_books = books |> set.from_list |> set.size
-
-//   [5, 4, 3, 2, 1]
-//   |> list.map(fn(discount) {
-//     case int.compare(discount, unique_books) {
-//       Lt | Eq ->
-//         list.concat([
-//           [get_discounted_price(discount)],
-//           ..apply_discounts(remove_books(discount, books, set.new(), []))
-//         ])
-//       Gt -> []
-//     }
-//   })
-// }
+fn try_apply_discount(
+  required_unique_books: Int,
+  remaining_unique_books: Int,
+  books: List(Int),
+) {
+  case int.compare(required_unique_books, remaining_unique_books) {
+    Lt | Eq ->
+      Some(
+        apply_discounts(Node(
+          books: remove_books(required_unique_books, books, set.new(), []),
+          discount_price: get_discounted_price(required_unique_books),
+          d5: None,
+          d4: None,
+          d3: None,
+          d2: None,
+        )),
+      )
+    Gt -> None
+  }
+}
 
 fn get_discounted_price(discount: Int) -> Float {
   case discount {
-    5 -> 5.0 *. full_price *. 0.75
-    4 -> 4.0 *. full_price *. 0.8
-    3 -> 3.0 *. full_price *. 0.9
-    2 -> 2.0 *. full_price *. 0.95
-    _ -> full_price
+    5 -> 5.0 *. full_price *. 0.25
+    4 -> 4.0 *. full_price *. 0.2
+    3 -> 3.0 *. full_price *. 0.1
+    2 -> 2.0 *. full_price *. 0.05
+    _ -> 0.0
   }
 }
 
