@@ -1,12 +1,9 @@
 import gleam/bool
 import gleam/float
-import gleam/function
 import gleam/int
-import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/order.{Eq, Gt, Lt}
-import gleam/result
 import gleam/set.{type Set}
 
 const full_price = 800.0
@@ -16,7 +13,6 @@ pub fn lowest_price(books: List(Int)) -> Float {
 
   Node(books:, discount_price: 0.0, d5: None, d4: None, d3: None, d2: None)
   |> apply_discounts
-  |> function.tap(io.debug)
   |> get_node_discount_branches()
   |> list.fold(from: highest_price, with: fn(lowest, total_discounted) {
     float.min(lowest, highest_price -. total_discounted)
@@ -70,7 +66,7 @@ fn try_apply_discount(
     Lt | Eq ->
       Some(
         apply_discounts(Node(
-          books: remove_books(required_unique_books, books, set.new(), []),
+          books: remove_books(required_unique_books, books),
           discount_price: get_discounted_price(required_unique_books),
           d5: None,
           d4: None,
@@ -92,7 +88,19 @@ fn get_discounted_price(discount: Int) -> Float {
   }
 }
 
-fn remove_books(
+fn remove_books(discount: Int, books: List(Int)) {
+  let books_by_amount =
+    list.sort(books, fn(a, b) {
+      order.negate(int.compare(
+        list.filter(books, fn(x) { x == a }) |> list.length(),
+        list.filter(books, fn(x) { x == b }) |> list.length(),
+      ))
+    })
+
+  do_remove_books(discount, books_by_amount, set.new(), [])
+}
+
+fn do_remove_books(
   discount: Int,
   books: List(Int),
   books_removed: Set(Int),
@@ -107,9 +115,9 @@ fn remove_books(
     [] -> panic as "Need to remove books but there's none left"
     [first, ..rest] -> {
       case set.contains(books_removed, first) {
-        True -> remove_books(discount, rest, books_removed, [first, ..acc])
+        True -> do_remove_books(discount, rest, books_removed, [first, ..acc])
         False ->
-          remove_books(discount, rest, set.insert(books_removed, first), acc)
+          do_remove_books(discount, rest, set.insert(books_removed, first), acc)
       }
     }
   }
