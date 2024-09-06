@@ -1,11 +1,11 @@
 import gleam/bool
-import gleam/int
-import gleam/iterator
 import gleam/list
-import gleam/result
+import gleam/option.{type Option, None, Some}
 
 pub opaque type Frame {
-  Frame(rolls: List(Int), bonus: List(Int))
+  OpenFrame(first_roll: Int, second_roll: Option(Int))
+  Strike(first_bonus: Option(Int), second_bonus: Option(Int))
+  Spare(bonus: Option(Int))
 }
 
 pub type Game {
@@ -19,19 +19,86 @@ pub type Error {
 }
 
 pub fn roll(game: Game, knocked_pins: Int) -> Result(Game, Error) {
-  use <- bool.guard(when: knocked_pins < 0, return: Error(InvalidPinCount))
-  use <- bool.guard(when: knocked_pins > 10, return: Error(InvalidPinCount))
+  use <- bool.guard(
+    when: is_invalid_pin_count(game, knocked_pins),
+    return: Error(InvalidPinCount),
+  )
+  use <- bool.guard(when: is_game_completed(game), return: Error(GameComplete))
 
-  case list.length(game.frames) {
-    too_many if too_many > 10 -> Error(GameComplete)
-    10 -> update_last_frame(game, knocked_pins)
-    _ -> update_any_frame(game, knocked_pins)
+  update_game(game, knocked_pins)
+}
+
+fn is_invalid_pin_count(game: Game, knocked_pins: Int) -> Bool {
+  use <- bool.guard(when: knocked_pins < 0, return: True)
+  use <- bool.guard(when: knocked_pins > 10, return: True)
+
+  case game.frames {
+    [OpenFrame(a, None), ..] -> a + knocked_pins > 10
+    _ -> False
+  }
+}
+
+fn is_game_completed(game: Game) -> Bool {
+  case game.frames {
+    [OpenFrame(_, None), ..] -> False
+    [Strike(_, None), ..] -> False
+    [Spare(None), ..] -> False
+    _ -> list.length(game.frames) == 10
+  }
+}
+
+fn update_game(game: Game, knocked_pins: Int) -> Result(Game, Error) {
+  let last_frame = list.length(game.frames) == 10
+  case last_frame, game.frames, knocked_pins {
+    _, [OpenFrame(a, None), ..rest], b if a + b == 10 ->
+      update_spares_and_strikes(Spare(None), rest)
+    _, [OpenFrame(a, None), ..rest], b ->
+      update_spares_and_strikes(OpenFrame(a, Some(b)), rest)
+    True, [Spare(None), ..rest], a ->
+      update_spares_and_strikes(Spare(Some(a)), rest)
+    True, [Strike(None, None), ..rest], a ->
+      update_spares_and_strikes(Strike(Some(a), None), rest)
+    True, [Strike(Some(a), None), ..rest], b if a == 10 ->
+      update_spares_and_strikes(Strike(Some(a), Some(b)), rest)
+    True, [Strike(Some(a), None), ..], b if a + b > 10 -> Error(InvalidPinCount)
+    True, [Strike(Some(a), None), ..rest], b ->
+      update_spares_and_strikes(Strike(Some(a), Some(b)), rest)
+    False, frames, 10 -> update_spares_and_strikes(Strike(None, None), frames)
+    False, frames, x -> update_spares_and_strikes(OpenFrame(x, None), frames)
+    _, _, _ -> Error(GameComplete)
+  }
+}
+
+fn update_spares_and_strikes(current_frame: Frame, frames: List(Frame)) {
+  case current_frame, frames {
+    OpenFrame(a, _), [Spare(None), ..rest] ->
+      Ok(Game([current_frame, Spare(Some(a)), ..rest]))
+    Strike(None, None), [Spare(None), ..rest] ->
+      Ok(Game([current_frame, Spare(Some(10)), ..rest]))
+    OpenFrame(a, b), [Strike(_, _), Strike(x, None), ..rest] ->
+      Ok(Game([current_frame, Strike(Some(a), b), Strike(x, Some(a)), ..rest]))
+    OpenFrame(a, b), [Strike(_, _), ..rest] ->
+      Ok(Game([current_frame, Strike(Some(a), b), ..rest]))
+    Spare(_), [Strike(_, _), ..rest] ->
+      Ok(Game([current_frame, Strike(Some(10), Some(0)), ..rest]))
+    Strike(a, _), [Strike(_, _), Strike(_, _), ..rest] ->
+      Ok(
+        Game([
+          current_frame,
+          Strike(Some(10), a),
+          Strike(Some(10), Some(10)),
+          ..rest
+        ]),
+      )
+    Strike(a, _), [Strike(_, _), ..rest] ->
+      Ok(Game([current_frame, Strike(Some(10), a), ..rest]))
+    _, _ -> Ok(Game([current_frame, ..frames]))
   }
 }
 
 pub fn score(game: Game) -> Result(Int, Error) {
   use <- bool.guard(
-    when: list.length(game.frames) != 10,
+    when: !is_game_completed(game),
     return: Error(GameNotComplete),
   )
 
@@ -40,68 +107,9 @@ pub fn score(game: Game) -> Result(Int, Error) {
 
 fn do_score(frames: List(Frame), acc: Int) {
   case frames {
-    [] -> acc
-    [first, ..rest] ->
-      do_score(rest, acc + int.sum(first.rolls) + int.sum(first.bonus))
-  }
-}
-
-fn update_last_frame(game: Game, knocked_pins: Int) {
-  case game.frames {
-    [Frame([10], []), ..rest] -> update_frame(Frame([10], [knocked_pins]), rest)
-    [Frame([10], [a]), ..rest] ->
-      update_frame(Frame([10], [a, knocked_pins]), rest)
-    [Frame([x, y], []), ..rest] if x + y == 10 ->
-      update_frame(Frame([x, y], [knocked_pins]), rest)
-    [Frame([10], _), _] -> Error(GameComplete)
-    [Frame([x, y], _), _] if x + y == 10 -> Error(GameComplete)
-    _ -> update_any_frame(game, knocked_pins)
-  }
-}
-
-fn update_any_frame(game: Game, knocked_pins: Int) {
-  use <- bool.guard(
-    when: list.length(game.frames) > 10,
-    return: Error(GameComplete),
-  )
-
-  case game.frames {
-    [] -> Ok(Game(frames: [Frame([knocked_pins], [])]))
-    [Frame([10], _) as strike, ..rest] ->
-      update_frame(Frame([knocked_pins], []), [strike, ..rest])
-    [Frame([x], _), ..rest] -> update_frame(Frame([x, knocked_pins], []), rest)
-    [Frame([_, _], _) as first, ..rest] -> {
-      update_frame(Frame([knocked_pins], []), [first, ..rest])
-    }
-    _ -> Error(InvalidPinCount)
-  }
-}
-
-fn update_frame(frame: Frame, frames: List(Frame)) {
-  use <- bool.guard(
-    when: int.sum(frame.rolls) > 10,
-    return: Error(InvalidPinCount),
-  )
-
-  Ok(Game([frame, ..update_previous_frames(frame, frames)]))
-}
-
-fn update_previous_frames(current_frame: Frame, previous_frames: List(Frame)) {
-  // Check for strikes and spares in frames
-  case current_frame, previous_frames {
-    // Updates 2 strikes in a row
-    Frame([x], _), [Frame([10], _), Frame([10], _), ..rest] -> [
-      Frame([10], [x]),
-      Frame([10], [10, x]),
-      ..rest
-    ]
-    // Updates previous spare with last throw
-    Frame([x], _), [Frame([a, b], _), ..rest] if a + b == 10 -> [
-      Frame([a, b], [x]),
-      ..rest
-    ]
-    // Updates previous strike with last throw (first & second it's the same case)
-    Frame(rolls, _), [Frame([10], _), ..rest] -> [Frame([10], rolls), ..rest]
-    _, _ -> previous_frames
+    [OpenFrame(a, Some(b)), ..rest] -> do_score(rest, acc + a + b)
+    [Spare(Some(a)), ..rest] -> do_score(rest, acc + 10 + a)
+    [Strike(Some(a), Some(b)), ..rest] -> do_score(rest, acc + 10 + a + b)
+    _ -> acc
   }
 }
