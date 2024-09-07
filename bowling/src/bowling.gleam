@@ -1,11 +1,9 @@
 import gleam/bool
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/pair
 
 pub opaque type Frame {
-  OpenFrame(first_roll: Int, second_roll: Option(Int))
-  Strike(first_bonus: Option(Int), second_bonus: Option(Int))
-  Spare(bonus: Option(Int))
+  Frame(rolls: List(Int))
 }
 
 pub type Game {
@@ -20,7 +18,7 @@ pub type Error {
 
 pub fn roll(game: Game, knocked_pins: Int) -> Result(Game, Error) {
   use <- bool.guard(
-    when: is_invalid_pin_count(game, knocked_pins),
+    when: !is_valid_pin_count(game, knocked_pins),
     return: Error(InvalidPinCount),
   )
   use <- bool.guard(when: is_game_completed(game), return: Error(GameComplete))
@@ -28,71 +26,45 @@ pub fn roll(game: Game, knocked_pins: Int) -> Result(Game, Error) {
   update_game(game, knocked_pins)
 }
 
-fn is_invalid_pin_count(game: Game, knocked_pins: Int) -> Bool {
-  use <- bool.guard(when: knocked_pins < 0, return: True)
-  use <- bool.guard(when: knocked_pins > 10, return: True)
+fn is_valid_pin_count(game: Game, knocked_pins: Int) -> Bool {
+  use <- bool.guard(when: knocked_pins < 0, return: False)
+  use <- bool.guard(when: knocked_pins > 10, return: False)
+  let last_frame = list.length(game.frames) == 10
 
-  case game.frames {
-    [OpenFrame(a, None), ..] -> a + knocked_pins > 10
-    _ -> False
+  case last_frame, game.frames {
+    True, [Frame([10, a]), ..] | _, [Frame([a]), ..] ->
+      a == 10 || a + knocked_pins <= 10
+    _, _ -> True
   }
 }
 
 fn is_game_completed(game: Game) -> Bool {
+  let frame_count = list.length(game.frames)
+  use <- bool.guard(when: frame_count < 10, return: False)
+
   case game.frames {
-    [OpenFrame(_, None), ..] -> False
-    [Strike(_, None), ..] -> False
-    [Spare(None), ..] -> False
-    _ -> list.length(game.frames) == 10
+    [Frame([10, ..rest]), ..] -> list.length(rest) == 2
+    [Frame([a, b, _]), ..] -> a + b == 10
+    [Frame([a, b]), ..] -> a + b < 10
+    _ -> False
   }
 }
 
 fn update_game(game: Game, knocked_pins: Int) -> Result(Game, Error) {
-  let last_frame = list.length(game.frames) == 10
-  case last_frame, game.frames, knocked_pins {
-    _, [OpenFrame(a, None), ..rest], b if a + b == 10 ->
-      update_spares_and_strikes(Spare(None), rest)
-    _, [OpenFrame(a, None), ..rest], b ->
-      update_spares_and_strikes(OpenFrame(a, Some(b)), rest)
-    True, [Spare(None), ..rest], a ->
-      update_spares_and_strikes(Spare(Some(a)), rest)
-    True, [Strike(None, None), ..rest], a ->
-      update_spares_and_strikes(Strike(Some(a), None), rest)
-    True, [Strike(Some(a), None), ..rest], b if a == 10 ->
-      update_spares_and_strikes(Strike(Some(a), Some(b)), rest)
-    True, [Strike(Some(a), None), ..], b if a + b > 10 -> Error(InvalidPinCount)
-    True, [Strike(Some(a), None), ..rest], b ->
-      update_spares_and_strikes(Strike(Some(a), Some(b)), rest)
-    False, frames, 10 -> update_spares_and_strikes(Strike(None, None), frames)
-    False, frames, x -> update_spares_and_strikes(OpenFrame(x, None), frames)
-    _, _, _ -> Error(GameComplete)
+  let start_new_frame = fn(throw: Int) {
+    Ok(Game([Frame([throw]), ..game.frames]))
   }
-}
+  let update_frame = fn(throw: Int) {
+    let assert [frame, ..rest] = game.frames
+    Ok(Game([Frame(list.append(frame.rolls, [throw])), ..rest]))
+  }
+  let last_frame = list.length(game.frames) == 10
 
-fn update_spares_and_strikes(current_frame: Frame, frames: List(Frame)) {
-  case current_frame, frames {
-    OpenFrame(a, _), [Spare(None), ..rest] ->
-      Ok(Game([current_frame, Spare(Some(a)), ..rest]))
-    Strike(None, None), [Spare(None), ..rest] ->
-      Ok(Game([current_frame, Spare(Some(10)), ..rest]))
-    OpenFrame(a, b), [Strike(_, _), Strike(x, None), ..rest] ->
-      Ok(Game([current_frame, Strike(Some(a), b), Strike(x, Some(a)), ..rest]))
-    OpenFrame(a, b), [Strike(_, _), ..rest] ->
-      Ok(Game([current_frame, Strike(Some(a), b), ..rest]))
-    Spare(_), [Strike(_, _), ..rest] ->
-      Ok(Game([current_frame, Strike(Some(10), Some(0)), ..rest]))
-    Strike(a, _), [Strike(_, _), Strike(_, _), ..rest] ->
-      Ok(
-        Game([
-          current_frame,
-          Strike(Some(10), a),
-          Strike(Some(10), Some(10)),
-          ..rest
-        ]),
-      )
-    Strike(a, _), [Strike(_, _), ..rest] ->
-      Ok(Game([current_frame, Strike(Some(10), a), ..rest]))
-    _, _ -> Ok(Game([current_frame, ..frames]))
+  case last_frame, game.frames, knocked_pins {
+    False, [], x -> start_new_frame(x)
+    False, [Frame([10]), ..], x -> start_new_frame(x)
+    False, [Frame([_, _]), ..], x -> start_new_frame(x)
+    _, _, x -> update_frame(x)
   }
 }
 
@@ -101,15 +73,36 @@ pub fn score(game: Game) -> Result(Int, Error) {
     when: !is_game_completed(game),
     return: Error(GameNotComplete),
   )
-
-  Ok(do_score(game.frames, 0))
+  Ok(compute_score(game))
 }
 
-fn do_score(frames: List(Frame), acc: Int) {
-  case frames {
-    [OpenFrame(a, Some(b)), ..rest] -> do_score(rest, acc + a + b)
-    [Spare(Some(a)), ..rest] -> do_score(rest, acc + 10 + a)
-    [Strike(Some(a), Some(b)), ..rest] -> do_score(rest, acc + 10 + a + b)
-    _ -> acc
-  }
+fn compute_score(game: Game) -> Int {
+  // We score bonuses by keeping a tab on strikes and spares.
+  // The list of frames must be in the order of the game.
+  // Every time we have a strike or spare, we push a multiplier representing the number of next throws to count
+  // Next 2 throws for a strike, next throw for a spare.
+  // We keep an array of those, because with multiple strikes we can have a throw scored more than twice.
+  game.frames
+  |> list.reverse()
+  |> list.fold(from: #([], 0), with: fn(tuple, frame) {
+    let #(multipliers, acc) =
+      frame.rolls
+      |> list.fold(from: tuple, with: fn(tuple, roll) {
+        let #(multipliers, acc) = tuple
+        let multiplier = list.length(multipliers) + 1
+        let updated_multipliers =
+          multipliers
+          |> list.map(fn(mul) { mul - 1 })
+          |> list.filter(fn(mul) { mul > 0 })
+
+        #(updated_multipliers, acc + roll * multiplier)
+      })
+
+    case frame.rolls {
+      [10] -> #([2, ..multipliers], acc)
+      [a, b] if a + b == 10 -> #([1, ..multipliers], acc)
+      _ -> #(multipliers, acc)
+    }
+  })
+  |> pair.second
 }
