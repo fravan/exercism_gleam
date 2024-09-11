@@ -1,69 +1,29 @@
 import gleam/list
-import gleam/pair
-import gleam/queue.{type Queue}
-import gleam/result
-
-pub fn can_chain(chain: List(#(Int, Int))) -> Bool {
-  stuff(chain)
-}
 
 type Domino =
   #(Int, Int)
 
-fn stuff(chain: List(Domino)) {
+pub fn can_chain(chain: List(Domino)) -> Bool {
   case chain {
     [] -> True
-    [first, ..rest] -> {
-      let final_queue = stuff_on_queue(queue.from_list([first]), first, rest)
-      case final_queue {
-        Error(_) -> False
-        Ok(final_queue) -> {
-          let first = queue.pop_front(final_queue)
-          let last = queue.pop_back(final_queue)
-
-          case first, last {
-            Ok(#(first, _)), Ok(#(last, _)) ->
-              pair.first(first) == pair.second(last)
-            _, _ -> False
-          }
-        }
-      }
-    }
+    [#(start, end)] -> start == end
+    [domino, ..remaining] ->
+      remaining |> list.any(chains_with(domino, remaining, _))
   }
 }
 
-fn stuff_on_queue(
-  queue: Queue(Domino),
+fn chains_with(
   current_domino: Domino,
-  dominos: List(Domino),
+  remaining: List(Domino),
+  tested_domino: Domino,
 ) {
-  case get_matching_domino(current_domino, dominos, []) {
-    // If we don't find a matching domino because there's none left
-    // Then we have finished the chain so this is fine
-    Error(remaining) ->
-      case remaining {
-        [] -> Ok(queue)
-        _ -> Error(Nil)
-      }
-    Ok(#(match, remaining_dominos)) -> {
-      stuff_on_queue(queue.push_back(queue, match), match, remaining_dominos)
+  case tested_domino {
+    #(left, right) | #(right, left) if right == current_domino.1 -> {
+      // we can assert here because `tested_domino` comes from `remaining` List
+      let assert Ok(#(_, remaining_dominos)) =
+        remaining |> list.pop(fn(d) { d == tested_domino })
+      can_chain([#(current_domino.0, left), ..remaining_dominos])
     }
-  }
-}
-
-fn get_matching_domino(
-  current_domino: Domino,
-  dominos: List(Domino),
-  remaining_dominos: List(Domino),
-) {
-  case dominos {
-    [] -> Error(list.concat([dominos, remaining_dominos]))
-    [first, ..rest] -> {
-      case first == current_domino || pair.swap(first) == current_domino {
-        True -> Ok(#(current_domino, list.concat([remaining_dominos, rest])))
-        False ->
-          get_matching_domino(current_domino, rest, [first, ..remaining_dominos])
-      }
-    }
+    _ -> False
   }
 }
