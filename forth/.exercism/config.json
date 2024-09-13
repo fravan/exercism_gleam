@@ -1,0 +1,19 @@
+{
+  "authors": [],
+  "files": {
+    "solution": [
+      "src/forth.gleam"
+    ],
+    "test": [
+      "test/forth_test.gleam"
+    ],
+    "example": [
+      ".meta/example.gleam"
+    ],
+    "invalidator": [
+      "gleam.toml",
+      "manifest.toml"
+    ]
+  },
+  "blurb": "Implement an evaluator for a very simple subset of Forth."
+}
