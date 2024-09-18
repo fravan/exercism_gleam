@@ -5,8 +5,7 @@ import gleam/option
 import gleam/string
 
 pub fn solve(puzzle: String) -> Result(Dict(String, Int), Nil) {
-  let assert [left, right] = string.split(puzzle, on: " == ")
-  let assert [left_words, right_words] = split(left, right, on: " + ")
+  let #(left_words, right_words) = split(puzzle)
   let non_zero_letters =
     list.concat([
       list.map(left_words, first_letter),
@@ -32,10 +31,7 @@ pub fn solve(puzzle: String) -> Result(Dict(String, Int), Nil) {
       |> dict.from_list
 
     use <- bool.guard(
-      when: list.any(non_zero_letters, fn(letter) {
-        let assert Ok(score) = dict.get(letter_scores, letter)
-        score == 0
-      }),
+      when: is_invalid_combination(non_zero_letters, letter_scores),
       return: list.Continue(option.None),
     )
 
@@ -50,11 +46,29 @@ pub fn solve(puzzle: String) -> Result(Dict(String, Int), Nil) {
   |> option.to_result(Nil)
 }
 
+fn is_invalid_combination(
+  non_zero_letters: List(String),
+  letter_scores: Dict(String, Int),
+) {
+  let has_zero_leading_letters =
+    non_zero_letters
+    |> list.any(fn(letter) {
+      let assert Ok(score) = dict.get(letter_scores, letter)
+      score == 0
+    })
+
+  let letter_scores = dict.values(letter_scores)
+  let has_duplicated_values = letter_scores != list.unique(letter_scores)
+
+  has_zero_leading_letters || has_duplicated_values
+}
+
 fn build_letter_count(letters_count: Dict(String, Int), word: String) {
   let word_length = string.length(word)
   word
   |> string.to_graphemes
   |> list.index_fold(from: letters_count, with: fn(letters_count, letter, idx) {
+    // A word like "AND" is translated as "#(A, 100), #(N, 10), #(D, 1)"
     letters_count
     |> dict.upsert(letter, fn(current_count) {
       case current_count {
@@ -65,8 +79,9 @@ fn build_letter_count(letters_count: Dict(String, Int), word: String) {
   })
 }
 
-fn split(left: String, right: String, on delimiter: String) {
-  [string.split(left, on: delimiter), string.split(right, on: delimiter)]
+fn split(puzzle: String) {
+  let assert [left, right] = string.split(puzzle, on: " == ")
+  #(string.split(left, on: " + "), string.split(right, on: " + "))
 }
 
 fn sum(letters_count: Dict(String, Int), letter_scores: Dict(String, Int)) {
