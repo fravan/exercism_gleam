@@ -1,11 +1,7 @@
 import gleam/bool
-import gleam/function
 import gleam/int
-import gleam/io
 import gleam/list
-import gleam/order
 import gleam/result
-import gleam/string
 
 pub type Error {
   ImpossibleTarget
@@ -15,8 +11,8 @@ pub fn find_fewest_coins(
   coins: List(Int),
   target: Int,
 ) -> Result(List(Int), Error) {
-  let sorted_coins = list.sort(coins, order.reverse(int.compare))
-  do_find(sorted_coins, target, [])
+  do_find(coins, target, [])
+  |> result.map(list.reverse)
 }
 
 fn do_find(coins: List(Int), target: Int, returned_coins: List(Int)) {
@@ -28,23 +24,16 @@ fn do_find(coins: List(Int), target: Int, returned_coins: List(Int)) {
     [a, ..rest] -> {
       let multiplier = delta / a
       list.range(0, multiplier)
-      |> list.map(fn(multiply) {
-        do_find(
-          rest,
-          target,
-          list.concat([list.repeat(a, times: multiply), returned_coins]),
-        )
-      })
-      |> list.fold(from: Error(ImpossibleTarget), with: fn(acc, current) {
-        case acc, current {
-          Error(_), Ok(_) -> current
-          Ok(list_a), Ok(list_b) -> {
-            case list.length(list_a) > list.length(list_b) {
-              True -> current
-              False -> acc
-            }
-          }
-          _, _ -> acc
+      |> list.fold_until(from: Error(ImpossibleTarget), with: fn(_, current) {
+        case
+          do_find(
+            rest,
+            target,
+            list.concat([list.repeat(a, times: current), returned_coins]),
+          )
+        {
+          Ok(a) -> list.Stop(Ok(a))
+          Error(_) -> list.Continue(Error(ImpossibleTarget))
         }
       })
     }
